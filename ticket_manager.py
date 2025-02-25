@@ -132,6 +132,14 @@ class TicketManager:
                 formatted_messages = f"用户 {user_name} 在群 {chatroom_name} 的消息记录：\n"
                 formatted_messages += "-" * 40 + "\n"
                 
+                # 收集媒体消息信息，用于生成下载链接
+                media_messages = {
+                    'images': [],
+                    'voices': [],
+                    'videos': [],
+                    'files': []
+                }
+                
                 for idx, msg in enumerate(messages, 1):
                     raw_message = msg.get('raw_message')
                     content = msg['content']
@@ -142,18 +150,71 @@ class TicketManager:
                         
                         if msg_type == MessageType.IMAGE:
                             content = "[图片]"
+                            if hasattr(raw_message, 'image_info') and raw_message.image_info:
+                                media_messages['images'].append({
+                                    'index': idx,
+                                    'msg_id': raw_message.msg_id,
+                                    'image_info': raw_message.image_info
+                                })
                         elif msg_type == MessageType.VOICE:
                             content = "[语音]"
+                            if hasattr(raw_message, 'voice_info') and raw_message.voice_info:
+                                media_messages['voices'].append({
+                                    'index': idx,
+                                    'msg_id': raw_message.msg_id,
+                                    'voice_info': raw_message.voice_info
+                                })
                         elif msg_type == MessageType.VIDEO:
                             content = "[视频]"
+                            if hasattr(raw_message, 'video_info') and raw_message.video_info:
+                                media_messages['videos'].append({
+                                    'index': idx,
+                                    'msg_id': raw_message.msg_id,
+                                    'video_info': raw_message.video_info
+                                })
                         elif msg_type == MessageType.FILE and hasattr(raw_message, 'file_info') and raw_message.file_info:
                             file_name = raw_message.file_info.title if raw_message.file_info.title else "未知文件"
                             content = f"[文件:{file_name}]"
+                            media_messages['files'].append({
+                                'index': idx,
+                                'msg_id': raw_message.msg_id,
+                                'file_info': raw_message.file_info,
+                                'file_name': file_name
+                            })
                     
                     formatted_messages += f"{idx}. [{msg['timestamp']}] {content}\n"
                 
                 formatted_messages += "-" * 40 + "\n"
                 formatted_messages += f"共 {len(messages)} 条消息"
+                
+                # 添加下载链接部分
+                has_media = any(len(media_list) > 0 for media_list in media_messages.values())
+                if has_media:
+                    formatted_messages += "\n\n下载链接："
+                    
+                    # 添加图片下载链接
+                    if media_messages['images']:
+                        formatted_messages += "\n图片："
+                        for img in media_messages['images']:
+                            formatted_messages += f"\n{img['index']}. /download_image?msg_id={img['msg_id']}"
+                    
+                    # 添加语音下载链接
+                    if media_messages['voices']:
+                        formatted_messages += "\n语音："
+                        for voice in media_messages['voices']:
+                            formatted_messages += f"\n{voice['index']}. /download_voice?msg_id={voice['msg_id']}"
+                    
+                    # 添加视频下载链接
+                    if media_messages['videos']:
+                        formatted_messages += "\n视频："
+                        for video in media_messages['videos']:
+                            formatted_messages += f"\n{video['index']}. /download_video?msg_id={video['msg_id']}"
+                    
+                    # 添加文件下载链接
+                    if media_messages['files']:
+                        formatted_messages += "\n文件："
+                        for file in media_messages['files']:
+                            formatted_messages += f"\n{file['index']}. /download_cdn?msg_id={file['msg_id']} ({file['file_name']})"
                 
                 logger.info(formatted_messages)
                 

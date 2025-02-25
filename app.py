@@ -811,6 +811,146 @@ def manage_whitelist():
             logger.error(f"更新白名单配置异常: {str(e)}")
             return jsonify({"ret": 500, "msg": f"更新白名单配置异常: {str(e)}"})
 
+@app.route('/download_image', methods=['GET'])
+def download_image():
+    """下载图片
+    
+    Args:
+        msg_id: 消息ID
+        
+    Returns:
+        包含文件URL的JSON响应
+    """
+    try:
+        msg_id = request.args.get('msg_id')
+        if not msg_id:
+            return jsonify({"ret": 400, "msg": "缺少必要参数: msg_id"})
+        
+        # 调用API获取图片下载链接
+        response = client.download_image(app_id, msg_id)
+        
+        # 检查API返回结果
+        if response.get('ret') == 200 and 'data' in response:
+            return jsonify({
+                "ret": 200,
+                "msg": "操作成功",
+                "data": {
+                    "fileUrl": response['data'].get('url', '')
+                }
+            })
+        else:
+            error_msg = response.get('msg', '未知错误')
+            logger.error(f"获取图片下载链接失败: {error_msg}")
+            return jsonify({"ret": response.get('ret', 500), "msg": error_msg})
+    except Exception as e:
+        logger.error(f"下载图片异常: {str(e)}", exc_info=True)
+        return jsonify({"ret": 500, "msg": f"下载图片异常: {str(e)}"})
+
+@app.route('/download_voice', methods=['GET'])
+def download_voice():
+    """下载语音
+    
+    Args:
+        msg_id: 消息ID
+        
+    Returns:
+        包含文件URL的JSON响应
+    """
+    try:
+        msg_id = request.args.get('msg_id')
+        if not msg_id:
+            return jsonify({"ret": 400, "msg": "缺少必要参数: msg_id"})
+        
+        # 调用API获取语音下载链接
+        response = client.download_voice(app_id, msg_id)
+        
+        # 检查API返回结果
+        if response.get('ret') == 200 and 'data' in response:
+            return jsonify({
+                "ret": 200,
+                "msg": "操作成功",
+                "data": {
+                    "fileUrl": response['data'].get('url', '')
+                }
+            })
+        else:
+            error_msg = response.get('msg', '未知错误')
+            logger.error(f"获取语音下载链接失败: {error_msg}")
+            return jsonify({"ret": response.get('ret', 500), "msg": error_msg})
+    except Exception as e:
+        logger.error(f"下载语音异常: {str(e)}", exc_info=True)
+        return jsonify({"ret": 500, "msg": f"下载语音异常: {str(e)}"})
+
+@app.route('/download_video', methods=['GET'])
+def download_video():
+    """下载视频
+    
+    Args:
+        msg_id: 消息ID
+        
+    Returns:
+        包含文件URL的JSON响应
+    """
+    try:
+        msg_id = request.args.get('msg_id')
+        if not msg_id:
+            return jsonify({"ret": 400, "msg": "缺少必要参数: msg_id"})
+        
+        # 调用API获取视频下载链接
+        response = client.download_video(app_id, msg_id)
+        
+        # 检查API返回结果
+        if response.get('ret') == 200 and 'data' in response:
+            return jsonify({
+                "ret": 200,
+                "msg": "操作成功",
+                "data": {
+                    "fileUrl": response['data'].get('url', '')
+                }
+            })
+        else:
+            error_msg = response.get('msg', '未知错误')
+            logger.error(f"获取视频下载链接失败: {error_msg}")
+            return jsonify({"ret": response.get('ret', 500), "msg": error_msg})
+    except Exception as e:
+        logger.error(f"下载视频异常: {str(e)}", exc_info=True)
+        return jsonify({"ret": 500, "msg": f"下载视频异常: {str(e)}"})
+
+@app.route('/download_cdn', methods=['GET'])
+def download_cdn():
+    """下载文件
+    
+    Args:
+        msg_id: 消息ID
+        
+    Returns:
+        包含文件URL的JSON响应
+    """
+    try:
+        msg_id = request.args.get('msg_id')
+        if not msg_id:
+            return jsonify({"ret": 400, "msg": "缺少必要参数: msg_id"})
+        
+        # 调用API获取文件下载链接
+        response = client.download_cdn(app_id, msg_id)
+        
+        # 检查API返回结果
+        if response.get('ret') == 200 and 'data' in response:
+            return jsonify({
+                "ret": 200,
+                "msg": "操作成功",
+                "data": {
+                    "fileUrl": response['data'].get('url', '')
+                }
+            })
+        else:
+            error_msg = response.get('msg', '未知错误')
+            logger.error(f"获取文件下载链接失败: {error_msg}")
+            return jsonify({"ret": response.get('ret', 500), "msg": error_msg})
+    except Exception as e:
+        logger.error(f"下载文件异常: {str(e)}", exc_info=True)
+        return jsonify({"ret": 500, "msg": f"下载文件异常: {str(e)}"})
+
 def run_flask():
     """运行Flask服务"""
     app.run(host='0.0.0.0', port=3000)
