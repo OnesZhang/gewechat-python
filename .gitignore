@@ -47,5 +47,3 @@ actions/
 output.txt
 reference-code
 .venv
-app.py
-demo.py
