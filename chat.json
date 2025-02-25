@@ -1,0 +1,12 @@
+{
+    "user_whitelist": [
+        "是丸子！",
+        "测试用户"
+    ],
+    "chatroom_whitelist": [
+        "技术交流群",
+        "bbb测试群"
+    ],
+    "enable_whitelist": true,
+    "last_updated": "2023-11-01 12:00:00"
+} 

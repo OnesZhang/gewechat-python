@@ -7,6 +7,7 @@ import logging
 from dotenv import load_dotenv
 from gewechat_client.handlers.message_handler import MessageHandler
 from database import create_connection, create_tables, save_contacts_to_db, get_friends, get_chatrooms, search_contacts, save_chatroom_members, get_chatroom_members_from_db, find_chatroom_by_name
+from config_manager import config_manager
 
 # 加载环境变量
 load_dotenv()
@@ -104,6 +105,48 @@ def wechat_callback():
             message = MessageHandler.parse_message(data['Data'])
             MessageHandler.handle_message(message)
             
+            # 获取发送者信息
+            from_user = message.from_user
+            is_chatroom = '@chatroom' in from_user
+            
+            # 检查白名单
+            if is_chatroom:
+                # 群聊消息
+                chatroom_id = from_user
+                # 获取群聊名称
+                connection = create_connection()
+                if connection:
+                    cursor = connection.cursor(dictionary=True)
+                    cursor.execute("SELECT nick_name FROM chatrooms WHERE chatroom_id = %s", (chatroom_id,))
+                    result = cursor.fetchone()
+                    cursor.close()
+                    connection.close()
+                    
+                    chatroom_name = result['nick_name'] if result and result['nick_name'] else chatroom_id
+                    if not config_manager.is_chatroom_in_whitelist(chatroom_name):
+                        logger.info(f"群聊 {chatroom_name} 不在白名单中，忽略消息")
+                        return {'ret': 200, 'msg': 'ignored'}
+                    
+                    logger.info(f"群聊 {chatroom_name} 在白名单中，处理消息")
+            else:
+                # 私聊消息
+                user_id = from_user
+                # 获取用户昵称
+                connection = create_connection()
+                if connection:
+                    cursor = connection.cursor(dictionary=True)
+                    cursor.execute("SELECT nick_name FROM friends WHERE wxid = %s", (user_id,))
+                    result = cursor.fetchone()
+                    cursor.close()
+                    connection.close()
+                    
+                    user_name = result['nick_name'] if result and result['nick_name'] else user_id
+                    if not config_manager.is_user_in_whitelist(user_name):
+                        logger.info(f"用户 {user_name} 不在白名单中，忽略消息")
+                        return {'ret': 200, 'msg': 'ignored'}
+                    
+                    logger.info(f"用户 {user_name} 在白名单中，处理消息")
+            
             # 检查消息内容是否为"/更新通讯录"
             if message.content == '/更新通讯录':
                 result = fetch_contacts()  # 调用更新通讯录的函数
@@ -132,8 +175,40 @@ def wechat_callback():
    例如：/更新群成员 技术交流群
 3. /帮助 - 显示此帮助信息
 
-注意：系统不再过滤联系人ID，保留所有原始数据。"""
+注意：只有在白名单中的用户或群聊才能使用以上命令。"""
                 client.post_text(app_id, message.from_user, help_text)
+            
+            # 处理白名单配置命令
+            elif message.content == '/查看白名单':
+                config = config_manager.get_config()
+                whitelist_text = f"""当前白名单配置：
+启用状态: {'已启用' if config.get('enable_whitelist', False) else '未启用'}
+
+用户白名单:
+{', '.join(config.get('user_whitelist', []) or ['无'])}
+
+群聊白名单:
+{', '.join(config.get('chatroom_whitelist', []) or ['无'])}"""
+                client.post_text(app_id, message.from_user, whitelist_text)
+            
+            # 启用或禁用白名单
+            elif message.content in ['/启用白名单', '/禁用白名单']:
+                enable = message.content == '/启用白名单'
+                
+                # 获取当前配置
+                current_config = config_manager.get_config()
+                current_config['enable_whitelist'] = enable
+                
+                # 添加更新时间
+                import datetime
+                current_config['last_updated'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 保存配置
+                if config_manager.update_config(current_config):
+                    status = "已启用" if enable else "已禁用"
+                    client.post_text(app_id, message.from_user, f"白名单{status}")
+                else:
+                    client.post_text(app_id, message.from_user, "更新白名单配置失败")
 
             # 这里可以添加自己的消息处理逻辑
             # handle_custom_message(message)
@@ -450,6 +525,55 @@ def get_chatroom_members(chatroom_id):
         if connection:
             connection.close()
 
+@app.route('/whitelist', methods=['GET', 'POST'])
+def manage_whitelist():
+    """管理白名单配置"""
+    if request.method == 'GET':
+        # 获取当前配置
+        config = config_manager.get_config()
+        return jsonify({
+            "ret": 200,
+            "msg": "获取白名单配置成功",
+            "data": config
+        })
+    elif request.method == 'POST':
+        # 更新配置
+        try:
+            new_config = request.get_json()
+            if not isinstance(new_config, dict):
+                return jsonify({"ret": 400, "msg": "无效的配置格式"})
+            
+            # 验证配置格式
+            if 'user_whitelist' in new_config and not isinstance(new_config['user_whitelist'], list):
+                return jsonify({"ret": 400, "msg": "用户白名单必须是数组"})
+            
+            if 'chatroom_whitelist' in new_config and not isinstance(new_config['chatroom_whitelist'], list):
+                return jsonify({"ret": 400, "msg": "群聊白名单必须是数组"})
+            
+            # 获取当前配置
+            current_config = config_manager.get_config()
+            
+            # 更新配置
+            for key, value in new_config.items():
+                current_config[key] = value
+            
+            # 添加更新时间
+            import datetime
+            current_config['last_updated'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 保存配置
+            if config_manager.update_config(current_config):
+                return jsonify({
+                    "ret": 200,
+                    "msg": "更新白名单配置成功",
+                    "data": current_config
+                })
+            else:
+                return jsonify({"ret": 500, "msg": "更新白名单配置失败"})
+        except Exception as e:
+            logger.error(f"更新白名单配置异常: {str(e)}")
+            return jsonify({"ret": 500, "msg": f"更新白名单配置异常: {str(e)}"})
+
 def run_flask():
     """运行Flask服务"""
     app.run(host='0.0.0.0', port=3000)
@@ -466,6 +590,14 @@ def main():
         
     logger.info("系统启动完成,等待接收消息...")
     logger.info("支持的命令: /更新通讯录, /更新群成员 群名称, /帮助")
+    
+    # 加载配置
+    config = config_manager.get_config()
+    whitelist_status = "已启用" if config.get('enable_whitelist', False) else "未启用"
+    logger.info(f"白名单状态: {whitelist_status}")
+    logger.info(f"用户白名单: {', '.join(config.get('user_whitelist', []) or ['无'])}")
+    logger.info(f"群聊白名单: {', '.join(config.get('chatroom_whitelist', []) or ['无'])}")
+    logger.info(f"配置文件支持热更新，修改 chat.json 后自动生效")
 
     # 启动时获取通讯录
     fetch_contacts()  # 在启动时获取通讯录
