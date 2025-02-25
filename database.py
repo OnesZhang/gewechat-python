@@ -95,34 +95,61 @@ def save_contacts_to_db(connection, contacts, brief_info=None):
     existing_ghs = {row[0] for row in cursor.fetchall()}
     
     # 保存好友
+    new_friends = 0
     for wxid in contacts['friends']:
+        if wxid not in existing_friends:
+            new_friends += 1
         cursor.execute("INSERT INTO friends (wxid) VALUES (%s) ON DUPLICATE KEY UPDATE wxid=VALUES(wxid)", (wxid,))
+    logger.info(f"保存好友信息: 总数{len(contacts['friends'])}，新增{new_friends}")
     
     # 保存群聊
+    new_chatrooms = 0
     for chatroom_id in contacts['chatrooms']:
+        if chatroom_id not in existing_chatrooms:
+            new_chatrooms += 1
         cursor.execute("INSERT INTO chatrooms (chatroom_id) VALUES (%s) ON DUPLICATE KEY UPDATE chatroom_id=VALUES(chatroom_id)", (chatroom_id,))
+    logger.info(f"保存群聊信息: 总数{len(contacts['chatrooms'])}，新增{new_chatrooms}")
     
     # 保存公众号
+    new_ghs = 0
     for gh_id in contacts['ghs']:
+        if gh_id not in existing_ghs:
+            new_ghs += 1
         cursor.execute("INSERT INTO ghs (gh_id) VALUES (%s) ON DUPLICATE KEY UPDATE gh_id=VALUES(gh_id)", (gh_id,))
+    logger.info(f"保存公众号信息: 总数{len(contacts['ghs'])}，新增{new_ghs}")
     
     # 删除不再存在的好友
+    deleted_friends = 0
     for wxid in existing_friends:
         if wxid not in contacts['friends']:
             cursor.execute("DELETE FROM friends WHERE wxid = %s", (wxid,))
+            deleted_friends += 1
+    if deleted_friends > 0:
+        logger.info(f"删除不存在的好友: {deleted_friends}个")
     
     # 删除不再存在的群聊
+    deleted_chatrooms = 0
     for chatroom_id in existing_chatrooms:
         if chatroom_id not in contacts['chatrooms']:
             cursor.execute("DELETE FROM chatrooms WHERE chatroom_id = %s", (chatroom_id,))
+            deleted_chatrooms += 1
+    if deleted_chatrooms > 0:
+        logger.info(f"删除不存在的群聊: {deleted_chatrooms}个")
     
     # 删除不再存在的公众号
+    deleted_ghs = 0
     for gh_id in existing_ghs:
         if gh_id not in contacts['ghs']:
             cursor.execute("DELETE FROM ghs WHERE gh_id = %s", (gh_id,))
+            deleted_ghs += 1
+    if deleted_ghs > 0:
+        logger.info(f"删除不存在的公众号: {deleted_ghs}个")
     
     # 保存联系人简要信息
     if brief_info:
+        updated_friends = 0
+        updated_chatrooms = 0
+        
         for info in brief_info:
             user_name = info.get('userName')
             
@@ -148,6 +175,7 @@ def save_contacts_to_db(connection, contacts, brief_info=None):
                     user_name
                 )
                 cursor.execute(query, data)
+                updated_friends += 1
             
             # 处理群聊信息
             elif user_name in contacts['chatrooms']:
@@ -163,6 +191,10 @@ def save_contacts_to_db(connection, contacts, brief_info=None):
                     user_name
                 )
                 cursor.execute(query, data)
+                updated_chatrooms += 1
+        
+        logger.info(f"更新好友详细信息: {updated_friends}个")
+        logger.info(f"更新群聊详细信息: {updated_chatrooms}个")
     
     connection.commit()
     cursor.close()

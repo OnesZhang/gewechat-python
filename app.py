@@ -39,6 +39,9 @@ def init_wechat():
     # 创建 GewechatClient 实例
     client = GewechatClient(base_url, token)
 
+    # 检查API方法
+    check_api_methods()
+
     # 登录, 自动创建二维码，扫码后自动登录
     app_id, error_msg = client.login(app_id=app_id)
     if error_msg:
@@ -47,6 +50,47 @@ def init_wechat():
     
     logger.info("微信登录成功")
     return True
+
+def check_api_methods():
+    """检查API方法的参数"""
+    try:
+        import inspect
+        import importlib
+        import os
+        
+        # 检查get_brief_info方法
+        if hasattr(client, 'get_brief_info'):
+            sig = inspect.signature(client.get_brief_info)
+            params = list(sig.parameters.keys())
+            logger.info(f"get_brief_info方法参数: {params}")
+            
+            # 检查方法文档
+            if client.get_brief_info.__doc__:
+                logger.info(f"get_brief_info方法文档: {client.get_brief_info.__doc__.strip()}")
+                
+            # 尝试获取方法源码
+            try:
+                source = inspect.getsource(client.get_brief_info)
+                logger.info(f"get_brief_info方法源码: \n{source}")
+            except Exception as e:
+                logger.error(f"获取方法源码异常: {str(e)}")
+                
+            # 尝试直接调用一次，查看错误信息
+            try:
+                # 使用一个假的wxid进行测试
+                test_result = client.get_brief_info(wxids="test_wxid")
+                logger.info(f"测试调用结果: {test_result}")
+            except Exception as e:
+                logger.error(f"测试调用异常: {str(e)}", exc_info=True)
+        else:
+            logger.warning("client没有get_brief_info方法")
+            
+            # 检查GewechatClient类的所有方法
+            logger.info("GewechatClient类的所有方法:")
+            for name, method in inspect.getmembers(client, inspect.ismethod):
+                logger.info(f"方法: {name}, 参数: {list(inspect.signature(method).parameters.keys())}")
+    except Exception as e:
+        logger.error(f"检查API方法异常: {str(e)}", exc_info=True)
 
 @app.route('/getWechatCallBack', methods=['POST'])
 def wechat_callback():
@@ -99,20 +143,61 @@ def fetch_contacts():
         #     logger.error("返回的联系人数据结构不正确: %s", contacts)
         #     return {"ret": 500, "msg": "联系人数据结构不正确"}
         
-        # 获取好友的简要信息
-        brief_info = []
-        for wxid in contacts['friends']:
-            brief_info_response = client.get_brief_info(wxid)
-            if brief_info_response.get('ret') == 200:
-                brief_info.append(brief_info_response['data'])
+        # 过滤好友列表，只保留wxid开头的值
+        valid_friends = [wxid for wxid in contacts['friends'] if wxid.startswith('wxid')]
+        logger.info(f"过滤后的有效好友数量: {len(valid_friends)}/{len(contacts['friends'])}")
         
-        # 处理群聊的简要信息
-        for chatroom_id in contacts['chatrooms']:
-            brief_info_response = client.get_brief_info(chatroom_id)
-            if brief_info_response.get('ret') == 200:
-                brief_info.append(brief_info_response['data'])
+        # 过滤群聊列表，只保留chatroom结尾的值
+        valid_chatrooms = [chatroom_id for chatroom_id in contacts['chatrooms'] if chatroom_id.endswith('chatroom')]
+        logger.info(f"过滤后的有效群聊数量: {len(valid_chatrooms)}/{len(contacts['chatrooms'])}")
+        
+        # 批量获取好友和群聊的简要信息
+        brief_info = []
+        
+        # 批量获取好友的简要信息
+        if valid_friends:
+            logger.info(f"开始批量获取好友简要信息，共{len(valid_friends)}个...")
+            # 分批处理，每批最多处理50个
+            batch_size = 50
+            for i in range(0, len(valid_friends), batch_size):
+                batch_friends = valid_friends[i:i+batch_size]
+                logger.info(f"处理好友批次 {i//batch_size + 1}/{(len(valid_friends)-1)//batch_size + 1}，数量: {len(batch_friends)}")
+                try:
+                    # 调用API获取好友简要信息
+                    friends_brief_info_response = client.get_brief_info(app_id, wxids=batch_friends)
+                    
+                    # 处理API返回结果
+                    if friends_brief_info_response.get('ret') == 200 and 'data' in friends_brief_info_response:
+                        brief_info.extend(friends_brief_info_response['data'])
+                        logger.info(f"成功获取好友简要信息: {len(friends_brief_info_response['data'])}个")
+                    else:
+                        logger.error(f"获取好友简要信息失败: {friends_brief_info_response.get('msg')}")
+                except Exception as e:
+                    logger.error(f"批量获取好友简要信息异常: {str(e)}")
+        
+        # 批量获取群聊的简要信息
+        if valid_chatrooms:
+            logger.info(f"开始批量获取群聊简要信息，共{len(valid_chatrooms)}个...")
+            # 分批处理，每批最多处理50个
+            batch_size = 50
+            for i in range(0, len(valid_chatrooms), batch_size):
+                batch_chatrooms = valid_chatrooms[i:i+batch_size]
+                logger.info(f"处理群聊批次 {i//batch_size + 1}/{(len(valid_chatrooms)-1)//batch_size + 1}，数量: {len(batch_chatrooms)}")
+                try:
+                    # 调用API获取群聊简要信息
+                    chatrooms_brief_info_response = client.get_brief_info(app_id, wxids=batch_chatrooms)
+                    
+                    # 处理API返回结果
+                    if chatrooms_brief_info_response.get('ret') == 200 and 'data' in chatrooms_brief_info_response:
+                        brief_info.extend(chatrooms_brief_info_response['data'])
+                        logger.info(f"成功获取群聊简要信息: {len(chatrooms_brief_info_response['data'])}个")
+                    else:
+                        logger.error(f"获取群聊简要信息失败: {chatrooms_brief_info_response.get('msg')}")
+                except Exception as e:
+                    logger.error(f"批量获取群聊简要信息异常: {str(e)}")
         
         # 将简要信息保存到数据库
+        logger.info(f"开始保存联系人简要信息到数据库，共{len(brief_info)}条记录...")
         save_contacts_to_db(connection, contacts, brief_info)
         
         return {
