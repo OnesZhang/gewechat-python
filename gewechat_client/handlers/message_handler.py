@@ -24,6 +24,14 @@ class MessageHandler:
             "msg_seq": msg_data["MsgSeq"]
         }
         
+        # 解析群消息
+        sender_pattern = r"^(.*?):"
+        sender_match = re.match(sender_pattern, base_data["content"])
+        sender_id = sender_match.group(1) if sender_match else ""
+        
+        # 提取 XML 内容
+        content = re.sub(f"^{sender_id}:\n", "", base_data["content"]) if sender_id else base_data["content"]
+        
         # 解析媒体信息
         image_info = None
         voice_info = None
@@ -32,43 +40,32 @@ class MessageHandler:
         
         if msg_data["MsgType"] == MessageType.IMAGE.value:
             try:
-                image_info = ImageInfo.from_xml(base_data["content"])
+                image_info = ImageInfo.from_xml(content)
             except ValueError as e:
                 logging.error(f"解析图片信息失败: {e}")
         elif msg_data["MsgType"] == MessageType.VOICE.value:
             try:
-                voice_info = VoiceInfo.from_xml(base_data["content"])
+                voice_info = VoiceInfo.from_xml(content)
             except ValueError as e:
                 logging.error(f"解析语音信息失败: {e}")
         elif msg_data["MsgType"] == MessageType.VIDEO.value:
             try:
-                video_info = VideoInfo.from_xml(base_data["content"])
+                video_info = VideoInfo.from_xml(content)
             except ValueError as e:
                 logging.error(f"解析视频信息失败: {e}")
         elif msg_data["MsgType"] == MessageType.FILE.value:
             try:
-                file_info = FileInfo.from_xml(base_data["content"])
+                file_info = FileInfo.from_xml(content)
             except ValueError as e:
                 logging.error(f"解析文件信息失败: {e}")
         
+        # 解析群成员数
+        member_count_pattern = r"<membercount>(\d+)</membercount>"
+        member_count_match = re.search(member_count_pattern, base_data["msg_source"])
+        member_count = int(member_count_match.group(1)) if member_count_match else None
+        
         # 判断是否为群消息
         if "@chatroom" in base_data["from_user"]:
-            # 解析群消息
-            sender_pattern = r"^(.*?):"
-            sender_match = re.match(sender_pattern, base_data["content"])
-            sender_id = sender_match.group(1) if sender_match else ""
-            
-            if msg_data["MsgType"] in [MessageType.IMAGE.value, MessageType.VOICE.value, MessageType.VIDEO.value, MessageType.FILE.value]:
-                # 对于媒体消息，需要从content中提取XML部分
-                content = re.sub(f"^{sender_id}:\n", "", base_data["content"]) if sender_id else base_data["content"]
-            else:
-                content = base_data["content"]
-            
-            # 解析群成员数
-            member_count_pattern = r"<membercount>(\d+)</membercount>"
-            member_count_match = re.search(member_count_pattern, base_data["msg_source"])
-            member_count = int(member_count_match.group(1)) if member_count_match else None
-            
             return GroupMessage(
                 **base_data,
                 group_id=base_data["from_user"],
