@@ -6,7 +6,7 @@ import json
 import logging
 from dotenv import load_dotenv
 from gewechat_client.handlers.message_handler import MessageHandler
-from database import create_connection, create_tables, save_contacts_to_db, get_friends, get_chatrooms, search_contacts
+from database import create_connection, create_tables, save_contacts_to_db, get_friends, get_chatrooms, search_contacts, save_chatroom_members, get_chatroom_members_from_db, find_chatroom_by_name
 
 # 加载环境变量
 load_dotenv()
@@ -112,6 +112,28 @@ def wechat_callback():
                 else:
                     client.post_text(app_id, message.from_user, '通讯录更新失败，请联系管理员')
             
+            # 检查消息内容是否为"/更新群成员 群名称"
+            elif message.content.startswith('/更新群成员 '):
+                # 提取群名称
+                chatroom_name = message.content[8:].strip()
+                logger.info(f"收到更新群成员请求，群名称: {chatroom_name}")
+                
+                # 更新群成员
+                result = update_chatroom_members(chatroom_name)
+                
+                # 发送结果消息
+                client.post_text(app_id, message.from_user, result['msg'])
+            
+            # 处理帮助命令
+            elif message.content == '/帮助':
+                help_text = """可用命令：
+1. /更新通讯录 - 更新所有联系人信息
+2. /更新群成员 群名称 - 更新指定群的成员列表
+   例如：/更新群成员 技术交流群
+3. /帮助 - 显示此帮助信息
+
+注意：系统不再过滤联系人ID，保留所有原始数据。"""
+                client.post_text(app_id, message.from_user, help_text)
 
             # 这里可以添加自己的消息处理逻辑
             # handle_custom_message(message)
@@ -120,6 +142,58 @@ def wechat_callback():
     except Exception as e:
         logger.error("处理回调消息异常: %s", str(e))
         return {'ret': 500, 'msg': str(e)}
+
+def update_chatroom_members(chatroom_name):
+    """根据群名称更新群成员
+    
+    Args:
+        chatroom_name: 群聊名称
+        
+    Returns:
+        操作结果
+    """
+    connection = create_connection()
+    if not connection:
+        return {"ret": 500, "msg": "数据库连接失败"}
+    
+    try:
+        # 根据群名称查找群ID
+        chatroom = find_chatroom_by_name(connection, chatroom_name)
+        if not chatroom:
+            return {"ret": 404, "msg": f"未找到名称包含\"{chatroom_name}\"的群聊"}
+        
+        chatroom_id = chatroom['chatroom_id']
+        chatroom_nick = chatroom['nick_name'] or chatroom_id
+        
+        # 调用API获取群成员列表
+        logger.info(f"开始更新群\"{chatroom_nick}\"(ID: {chatroom_id})的成员列表...")
+        response = client.get_chatroom_member_list(app_id, chatroom_id)
+        
+        # 检查API返回结果
+        if response.get('ret') == 200 and 'data' in response:
+            # 提取数据
+            data = response['data']
+            member_list = data.get('memberList', [])
+            owner = data.get('chatroomOwner')
+            admins = data.get('adminWxid', [])
+            
+            # 保存到数据库
+            save_chatroom_members(connection, chatroom_id, member_list, owner, admins)
+            
+            return {
+                "ret": 200, 
+                "msg": f"群\"{chatroom_nick}\"成员列表更新成功，共{len(member_list)}人"
+            }
+        else:
+            error_msg = response.get('msg', '未知错误')
+            logger.error(f"获取群\"{chatroom_nick}\"成员列表失败: {error_msg}")
+            return {"ret": response.get('ret', 500), "msg": f"获取群\"{chatroom_nick}\"成员列表失败: {error_msg}"}
+    except Exception as e:
+        logger.error(f"更新群成员异常: {str(e)}")
+        return {"ret": 500, "msg": f"更新群成员异常: {str(e)}"}
+    finally:
+        if connection:
+            connection.close()
 
 @app.route('/fetch_contacts', methods=['GET'])
 def fetch_contacts():
@@ -138,18 +212,13 @@ def fetch_contacts():
         
         contacts = response['data']  # 从 response 中提取 data
         
-        # # 检查 contacts 是否包含预期的键
-        # if 'friends' not in contacts or 'chatrooms' not in contacts or 'ghs' not in contacts:
-        #     logger.error("返回的联系人数据结构不正确: %s", contacts)
-        #     return {"ret": 500, "msg": "联系人数据结构不正确"}
+        # 不再过滤，直接使用原始列表
+        valid_friends = contacts['friends']
+        logger.info(f"好友数量: {len(valid_friends)}")
         
-        # 过滤好友列表，只保留wxid开头的值
-        valid_friends = [wxid for wxid in contacts['friends'] if wxid.startswith('wxid')]
-        logger.info(f"过滤后的有效好友数量: {len(valid_friends)}/{len(contacts['friends'])}")
-        
-        # 过滤群聊列表，只保留chatroom结尾的值
-        valid_chatrooms = [chatroom_id for chatroom_id in contacts['chatrooms'] if chatroom_id.endswith('chatroom')]
-        logger.info(f"过滤后的有效群聊数量: {len(valid_chatrooms)}/{len(contacts['chatrooms'])}")
+        # 不再过滤，直接使用原始列表
+        valid_chatrooms = contacts['chatrooms']
+        logger.info(f"群聊数量: {len(valid_chatrooms)}")
         
         # 批量获取好友和群聊的简要信息
         brief_info = []
@@ -159,6 +228,7 @@ def fetch_contacts():
             logger.info(f"开始批量获取好友简要信息，共{len(valid_friends)}个...")
             # 分批处理，每批最多处理50个
             batch_size = 50
+            invalid_friend_count = 0
             for i in range(0, len(valid_friends), batch_size):
                 batch_friends = valid_friends[i:i+batch_size]
                 logger.info(f"处理好友批次 {i//batch_size + 1}/{(len(valid_friends)-1)//batch_size + 1}，数量: {len(batch_friends)}")
@@ -168,18 +238,31 @@ def fetch_contacts():
                     
                     # 处理API返回结果
                     if friends_brief_info_response.get('ret') == 200 and 'data' in friends_brief_info_response:
-                        brief_info.extend(friends_brief_info_response['data'])
-                        logger.info(f"成功获取好友简要信息: {len(friends_brief_info_response['data'])}个")
+                        received_data = friends_brief_info_response['data']
+                        brief_info.extend(received_data)
+                        
+                        # 检查是否有ID未返回数据
+                        if len(received_data) < len(batch_friends):
+                            missing_count = len(batch_friends) - len(received_data)
+                            invalid_friend_count += missing_count
+                            logger.warning(f"批次中有{missing_count}个好友ID未返回数据")
+                            
+                        logger.info(f"成功获取好友简要信息: {len(received_data)}个")
                     else:
-                        logger.error(f"获取好友简要信息失败: {friends_brief_info_response.get('msg')}")
+                        error_msg = friends_brief_info_response.get('msg', '未知错误')
+                        logger.error(f"获取好友简要信息失败: {error_msg}")
                 except Exception as e:
-                    logger.error(f"批量获取好友简要信息异常: {str(e)}")
+                    logger.error(f"批量获取好友简要信息异常: {str(e)}", exc_info=True)
+            
+            if invalid_friend_count > 0:
+                logger.warning(f"总共有{invalid_friend_count}个好友ID未能获取到简要信息")
         
         # 批量获取群聊的简要信息
         if valid_chatrooms:
             logger.info(f"开始批量获取群聊简要信息，共{len(valid_chatrooms)}个...")
             # 分批处理，每批最多处理50个
             batch_size = 50
+            invalid_chatroom_count = 0
             for i in range(0, len(valid_chatrooms), batch_size):
                 batch_chatrooms = valid_chatrooms[i:i+batch_size]
                 logger.info(f"处理群聊批次 {i//batch_size + 1}/{(len(valid_chatrooms)-1)//batch_size + 1}，数量: {len(batch_chatrooms)}")
@@ -189,12 +272,24 @@ def fetch_contacts():
                     
                     # 处理API返回结果
                     if chatrooms_brief_info_response.get('ret') == 200 and 'data' in chatrooms_brief_info_response:
-                        brief_info.extend(chatrooms_brief_info_response['data'])
-                        logger.info(f"成功获取群聊简要信息: {len(chatrooms_brief_info_response['data'])}个")
+                        received_data = chatrooms_brief_info_response['data']
+                        brief_info.extend(received_data)
+                        
+                        # 检查是否有ID未返回数据
+                        if len(received_data) < len(batch_chatrooms):
+                            missing_count = len(batch_chatrooms) - len(received_data)
+                            invalid_chatroom_count += missing_count
+                            logger.warning(f"批次中有{missing_count}个群聊ID未返回数据")
+                            
+                        logger.info(f"成功获取群聊简要信息: {len(received_data)}个")
                     else:
-                        logger.error(f"获取群聊简要信息失败: {chatrooms_brief_info_response.get('msg')}")
+                        error_msg = chatrooms_brief_info_response.get('msg', '未知错误')
+                        logger.error(f"获取群聊简要信息失败: {error_msg}")
                 except Exception as e:
-                    logger.error(f"批量获取群聊简要信息异常: {str(e)}")
+                    logger.error(f"批量获取群聊简要信息异常: {str(e)}", exc_info=True)
+            
+            if invalid_chatroom_count > 0:
+                logger.warning(f"总共有{invalid_chatroom_count}个群聊ID未能获取到简要信息")
         
         # 将简要信息保存到数据库
         logger.info(f"开始保存联系人简要信息到数据库，共{len(brief_info)}条记录...")
@@ -266,6 +361,95 @@ def search():
         })
     return jsonify({"ret": 500, "msg": "数据库连接失败"})
 
+@app.route('/chatroom_members/<chatroom_id>', methods=['GET'])
+def get_chatroom_members(chatroom_id):
+    """获取群成员列表
+    
+    Args:
+        chatroom_id: 群聊ID，必须以chatroom结尾
+        
+    Returns:
+        群成员列表数据
+    """
+    # 验证群聊ID格式
+    if not chatroom_id.endswith('chatroom'):
+        return jsonify({"ret": 400, "msg": "无效的群聊ID格式"})
+    
+    # 获取查询参数
+    refresh = request.args.get('refresh', 'false').lower() == 'true'
+    limit = int(request.args.get('limit', 1000))
+    offset = int(request.args.get('offset', 0))
+    
+    # 创建数据库连接
+    connection = create_connection()
+    if not connection:
+        return jsonify({"ret": 500, "msg": "数据库连接失败"})
+    
+    try:
+        # 如果不需要刷新，直接从数据库获取
+        if not refresh:
+            # 检查数据库中是否有该群的成员数据
+            cursor = connection.cursor()
+            cursor.execute("SELECT COUNT(*) FROM chatroom_members WHERE chatroom_id = %s", (chatroom_id,))
+            count = cursor.fetchone()[0]
+            cursor.close()
+            
+            # 如果数据库中有数据，直接返回
+            if count > 0:
+                logger.info(f"从数据库获取群聊 {chatroom_id} 的成员列表...")
+                members = get_chatroom_members_from_db(connection, chatroom_id, limit, offset)
+                return jsonify({
+                    "ret": 200,
+                    "msg": "获取群成员列表成功(来自数据库)",
+                    "data": members,
+                    "total": count
+                })
+        
+        # 从API获取最新数据
+        logger.info(f"从API获取群聊 {chatroom_id} 的成员列表...")
+        response = client.get_chatroom_member_list(app_id, chatroom_id)
+        
+        # 检查API返回结果
+        if response.get('ret') == 200 and 'data' in response:
+            # 提取数据
+            data = response['data']
+            member_list = data.get('memberList', [])
+            owner = data.get('chatroomOwner')
+            admins = data.get('adminWxid', [])
+            
+            logger.info(f"成功获取群聊 {chatroom_id} 的成员列表，共{len(member_list)}人")
+            
+            # 保存到数据库
+            save_chatroom_members(connection, chatroom_id, member_list, owner, admins)
+            
+            # 如果需要分页，从数据库中获取分页后的数据
+            if limit < len(member_list) or offset > 0:
+                members = get_chatroom_members_from_db(connection, chatroom_id, limit, offset)
+                return jsonify({
+                    "ret": 200,
+                    "msg": "获取群成员列表成功",
+                    "data": members,
+                    "total": len(member_list)
+                })
+            
+            # 否则直接返回API结果
+            return jsonify({
+                "ret": 200,
+                "msg": "获取群成员列表成功",
+                "data": member_list,
+                "total": len(member_list)
+            })
+        else:
+            error_msg = response.get('msg', '未知错误')
+            logger.error(f"获取群聊 {chatroom_id} 成员列表失败: {error_msg}")
+            return jsonify({"ret": response.get('ret', 500), "msg": error_msg})
+    except Exception as e:
+        logger.error(f"获取群聊 {chatroom_id} 成员列表异常: {str(e)}")
+        return jsonify({"ret": 500, "msg": f"获取群成员列表异常: {str(e)}"})
+    finally:
+        if connection:
+            connection.close()
+
 def run_flask():
     """运行Flask服务"""
     app.run(host='0.0.0.0', port=3000)
@@ -281,7 +465,8 @@ def main():
         return
         
     logger.info("系统启动完成,等待接收消息...")
-    
+    logger.info("支持的命令: /更新通讯录, /更新群成员 群名称, /帮助")
+
     # 启动时获取通讯录
     fetch_contacts()  # 在启动时获取通讯录
     

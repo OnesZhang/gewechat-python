@@ -73,10 +73,30 @@ def create_tables(connection):
         gh_id VARCHAR(255) NOT NULL UNIQUE
     )
     """
+    
+    # 创建群成员表
+    create_chatroom_members_table = """
+    CREATE TABLE IF NOT EXISTS chatroom_members (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        chatroom_id VARCHAR(255) NOT NULL,
+        wxid VARCHAR(255) NOT NULL,
+        nick_name VARCHAR(255),
+        display_name VARCHAR(255),
+        inviter_user_name VARCHAR(255),
+        member_flag INT,
+        head_img_url TEXT,
+        is_owner BOOLEAN DEFAULT FALSE,
+        is_admin BOOLEAN DEFAULT FALSE,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_member (chatroom_id, wxid)
+    )
+    """
+    
     cursor = connection.cursor()
     cursor.execute(create_friends_table)
     cursor.execute(create_chatrooms_table)
     cursor.execute(create_ghs_table)
+    cursor.execute(create_chatroom_members_table)
     connection.commit()
     cursor.close()
 
@@ -276,3 +296,155 @@ def search_contacts(connection, keyword, contact_type=None, limit=100, offset=0)
     results = cursor.fetchall()
     cursor.close()
     return results 
+
+def save_chatroom_members(connection, chatroom_id, member_list, owner=None, admins=None):
+    """将群成员保存到数据库
+    
+    Args:
+        connection: 数据库连接
+        chatroom_id: 群聊ID
+        member_list: 群成员列表
+        owner: 群主wxid
+        admins: 管理员wxid列表
+    """
+    if not member_list:
+        logger.warning(f"群聊 {chatroom_id} 没有成员数据，跳过保存")
+        return
+    
+    cursor = connection.cursor()
+    
+    try:
+        # 获取当前数据库中的群成员记录
+        cursor.execute("SELECT wxid FROM chatroom_members WHERE chatroom_id = %s", (chatroom_id,))
+        existing_members = {row[0] for row in cursor.fetchall()}
+        
+        # 当前API返回的群成员
+        current_members = set()
+        
+        # 保存或更新群成员信息
+        new_members = 0
+        updated_members = 0
+        
+        for member in member_list:
+            wxid = member.get('wxid')
+            if not wxid:
+                continue
+                
+            current_members.add(wxid)
+            
+            # 判断是否为群主或管理员
+            is_owner = owner and wxid == owner
+            is_admin = admins and wxid in admins
+            
+            if wxid in existing_members:
+                # 更新现有成员信息
+                query = """
+                UPDATE chatroom_members SET 
+                    nick_name = %s,
+                    display_name = %s,
+                    inviter_user_name = %s,
+                    member_flag = %s,
+                    head_img_url = %s,
+                    is_owner = %s,
+                    is_admin = %s,
+                    last_updated = NOW()
+                WHERE chatroom_id = %s AND wxid = %s
+                """
+                data = (
+                    member.get('nickName'),
+                    member.get('displayName'),
+                    member.get('inviterUserName'),
+                    member.get('memberFlag'),
+                    member.get('smallHeadImgUrl'),
+                    is_owner,
+                    is_admin,
+                    chatroom_id,
+                    wxid
+                )
+                cursor.execute(query, data)
+                updated_members += 1
+            else:
+                # 添加新成员
+                query = """
+                INSERT INTO chatroom_members (
+                    chatroom_id, wxid, nick_name, display_name, 
+                    inviter_user_name, member_flag, head_img_url, 
+                    is_owner, is_admin
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                data = (
+                    chatroom_id,
+                    wxid,
+                    member.get('nickName'),
+                    member.get('displayName'),
+                    member.get('inviterUserName'),
+                    member.get('memberFlag'),
+                    member.get('smallHeadImgUrl'),
+                    is_owner,
+                    is_admin
+                )
+                cursor.execute(query, data)
+                new_members += 1
+        
+        # 删除不再是群成员的记录
+        members_to_delete = existing_members - current_members
+        if members_to_delete:
+            placeholders = ', '.join(['%s'] * len(members_to_delete))
+            delete_query = f"DELETE FROM chatroom_members WHERE chatroom_id = %s AND wxid IN ({placeholders})"
+            cursor.execute(delete_query, (chatroom_id, *members_to_delete))
+            logger.info(f"从群聊 {chatroom_id} 中删除了 {len(members_to_delete)} 个不存在的成员")
+        
+        connection.commit()
+        logger.info(f"群聊 {chatroom_id} 成员保存完成: 新增{new_members}人，更新{updated_members}人")
+        
+    except Exception as e:
+        connection.rollback()
+        logger.error(f"保存群聊 {chatroom_id} 成员异常: {str(e)}")
+    finally:
+        cursor.close()
+
+def get_chatroom_members_from_db(connection, chatroom_id, limit=1000, offset=0):
+    """从数据库获取群成员列表
+    
+    Args:
+        connection: 数据库连接
+        chatroom_id: 群聊ID
+        limit: 返回结果数量限制，默认1000
+        offset: 分页偏移量，默认0
+        
+    Returns:
+        群成员列表
+    """
+    cursor = connection.cursor(dictionary=True)
+    query = """
+    SELECT * FROM chatroom_members
+    WHERE chatroom_id = %s
+    ORDER BY is_owner DESC, is_admin DESC, nick_name
+    LIMIT %s OFFSET %s
+    """
+    cursor.execute(query, (chatroom_id, limit, offset))
+    results = cursor.fetchall()
+    cursor.close()
+    return results 
+
+def find_chatroom_by_name(connection, chatroom_name):
+    """根据群名称查找群ID
+    
+    Args:
+        connection: 数据库连接
+        chatroom_name: 群聊名称
+        
+    Returns:
+        匹配的群聊信息，如果找不到则返回None
+    """
+    cursor = connection.cursor(dictionary=True)
+    query = """
+    SELECT * FROM chatrooms
+    WHERE nick_name LIKE %s
+    ORDER BY last_updated DESC
+    LIMIT 1
+    """
+    cursor.execute(query, (f"%{chatroom_name}%",))
+    result = cursor.fetchone()
+    cursor.close()
+    return result 
