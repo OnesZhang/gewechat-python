@@ -6,6 +6,7 @@ import json
 import logging
 from dotenv import load_dotenv
 from gewechat_client.handlers.message_handler import MessageHandler
+from database import create_connection, create_tables, save_contacts_to_db
 
 # 加载环境变量
 load_dotenv()
@@ -59,6 +60,15 @@ def wechat_callback():
             message = MessageHandler.parse_message(data['Data'])
             MessageHandler.handle_message(message)
             
+            # 检查消息内容是否为"/更新通讯录"
+            if message.content == '/更新通讯录':
+                result = fetch_contacts()  # 调用更新通讯录的函数
+                if result['ret'] == 200:
+                    client.post_text(app_id, message.from_user, '通讯录更新成功')
+                else:
+                    client.post_text(app_id, message.from_user, '通讯录更新失败，请联系管理员')
+            
+
             # 这里可以添加自己的消息处理逻辑
             # handle_custom_message(message)
         
@@ -66,6 +76,51 @@ def wechat_callback():
     except Exception as e:
         logger.error("处理回调消息异常: %s", str(e))
         return {'ret': 500, 'msg': str(e)}
+
+@app.route('/fetch_contacts', methods=['GET'])
+def fetch_contacts():
+    """获取通讯录并保存到数据库"""
+    connection = create_connection()
+    if connection:
+        create_tables(connection)
+        
+        # 获取通讯录
+        response = client.fetch_contacts_list(app_id)
+
+        # # 检查返回的 response 是否包含预期的键
+        # if response.get('ret') != 200 or 'data' not in response:
+        #     logger.error("返回的联系人数据结构不正确: %s", response)
+        #     return {"ret": 500, "msg": "联系人数据结构不正确"}
+        
+        contacts = response['data']  # 从 response 中提取 data
+        
+        # # 检查 contacts 是否包含预期的键
+        # if 'friends' not in contacts or 'chatrooms' not in contacts or 'ghs' not in contacts:
+        #     logger.error("返回的联系人数据结构不正确: %s", contacts)
+        #     return {"ret": 500, "msg": "联系人数据结构不正确"}
+        
+        # 获取好友的简要信息
+        brief_info = []
+        for wxid in contacts['friends']:
+            brief_info_response = client.get_brief_info(wxid)
+            if brief_info_response.get('ret') == 200:
+                brief_info.append(brief_info_response['data'])
+        
+        # 处理群聊的简要信息
+        for chatroom_id in contacts['chatrooms']:
+            brief_info_response = client.get_brief_info(chatroom_id)
+            if brief_info_response.get('ret') == 200:
+                brief_info.append(brief_info_response['data'])
+        
+        # 将简要信息保存到数据库
+        save_contacts_to_db(connection, contacts, brief_info)
+        
+        return {
+            "ret": 200,
+            "msg": "操作成功",
+            "data": contacts
+        }
+    return {"ret": 500, "msg": "数据库连接失败"}
 
 def run_flask():
     """运行Flask服务"""
@@ -82,6 +137,9 @@ def main():
         return
         
     logger.info("系统启动完成,等待接收消息...")
+    
+    # 启动时获取通讯录
+    fetch_contacts()  # 在启动时获取通讯录
     
     # 保持主线程运行
     try:

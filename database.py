@@ -1,0 +1,114 @@
+import mysql.connector
+from mysql.connector import Error
+import os
+import logging
+
+from dotenv import load_dotenv
+load_dotenv()
+
+# 数据库配置
+db_config = {
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'port': os.getenv('DB_PORT', 3306),
+    'database': os.getenv('DB_NAME', 'wechat_contacts'),
+    'user': os.getenv('DB_USER', 'root'),
+    'password': os.getenv('DB_PASSWORD', 'password')
+}
+
+logger = logging.getLogger(__name__)
+
+def create_connection():
+    """创建数据库连接"""
+    connection = None
+    try:
+        # 连接到 MySQL
+        connection = mysql.connector.connect(
+            host=db_config['host'],
+            port=db_config['port'],
+            user=db_config['user'],
+            password=db_config['password']
+        )
+        logger.info("成功连接到数据库服务器")
+
+        # 检查数据库是否存在
+        cursor = connection.cursor()
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_config['database']}")
+        logger.info(f"数据库 {db_config['database']} 已创建或已存在")
+        
+        # 连接到指定数据库
+        connection.database = db_config['database']
+        
+    except Error as e:
+        logger.error(f"数据库连接错误: {e}")
+    return connection
+
+def create_tables(connection):
+    """创建数据库表"""
+    create_friends_table = """
+    CREATE TABLE IF NOT EXISTS friends (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        wxid VARCHAR(255) NOT NULL UNIQUE
+    )
+    """
+    create_chatrooms_table = """
+    CREATE TABLE IF NOT EXISTS chatrooms (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        chatroom_id VARCHAR(255) NOT NULL UNIQUE
+    )
+    """
+    create_ghs_table = """
+    CREATE TABLE IF NOT EXISTS ghs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        gh_id VARCHAR(255) NOT NULL UNIQUE
+    )
+    """
+    cursor = connection.cursor()
+    cursor.execute(create_friends_table)
+    cursor.execute(create_chatrooms_table)
+    cursor.execute(create_ghs_table)
+    connection.commit()
+    cursor.close()
+
+def save_contacts_to_db(connection, contacts):
+    """将通讯录保存到数据库"""
+    cursor = connection.cursor()
+    
+    # 获取当前数据库中的记录
+    cursor.execute("SELECT wxid FROM friends")
+    existing_friends = {row[0] for row in cursor.fetchall()}
+    
+    cursor.execute("SELECT chatroom_id FROM chatrooms")
+    existing_chatrooms = {row[0] for row in cursor.fetchall()}
+    
+    cursor.execute("SELECT gh_id FROM ghs")
+    existing_ghs = {row[0] for row in cursor.fetchall()}
+    
+    # 保存好友
+    for wxid in contacts['friends']:
+        cursor.execute("INSERT INTO friends (wxid) VALUES (%s) ON DUPLICATE KEY UPDATE wxid=VALUES(wxid)", (wxid,))
+    
+    # 保存群聊
+    for chatroom_id in contacts['chatrooms']:
+        cursor.execute("INSERT INTO chatrooms (chatroom_id) VALUES (%s) ON DUPLICATE KEY UPDATE chatroom_id=VALUES(chatroom_id)", (chatroom_id,))
+    
+    # 保存公众号
+    for gh_id in contacts['ghs']:
+        cursor.execute("INSERT INTO ghs (gh_id) VALUES (%s) ON DUPLICATE KEY UPDATE gh_id=VALUES(gh_id)", (gh_id,))
+    
+    # 删除不再存在的好友
+    for wxid in existing_friends:
+        if wxid not in contacts['friends']:
+            cursor.execute("DELETE FROM friends WHERE wxid = %s", (wxid,))
+    
+    # 删除不再存在的群聊
+    for chatroom_id in existing_chatrooms:
+        if chatroom_id not in contacts['chatrooms']:
+            cursor.execute("DELETE FROM chatrooms WHERE chatroom_id = %s", (chatroom_id,))
+    
+    # 删除不再存在的公众号
+    for gh_id in existing_ghs:
+        if gh_id not in contacts['ghs']:
+            cursor.execute("DELETE FROM ghs WHERE gh_id = %s", (gh_id,))
+    
+    connection.commit()
+    cursor.close() 
