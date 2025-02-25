@@ -7,6 +7,7 @@ from .api.label_api import LabelApi
 from .api.login_api import LoginApi
 from .api.message_api import MessageApi
 from .api.personal_api import PersonalApi
+from .handlers.message_handler import MessageHandler
 
 class GewechatClient:
     """
@@ -344,3 +345,9 @@ class GewechatClient:
     def revoke_msg(self, app_id, to_wxid, msg_id, new_msg_id, create_time):
         """撤回消息"""
         return self._message_api.revoke_msg(app_id, to_wxid, msg_id, new_msg_id, create_time)
+
+    def handle_callback_message(self, callback_data: dict) -> None:
+        """处理回调消息"""
+        if callback_data["TypeName"] == "AddMsg":
+            message = MessageHandler.parse_message(callback_data["Data"])
+            MessageHandler.handle_message(message)

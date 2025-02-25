@@ -1,39 +1,74 @@
 from gewechat_client import GewechatClient
+from flask import Flask, request
 import os
+import threading
+import json
+import logging
 
-def main():
+# 配置日志
+logging.basicConfig(level=logging.INFO,
+                   format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+
+def init_wechat():
     # 配置参数
     base_url = os.environ.get("BASE_URL", "http://127.0.0.1:2531/v2/api")
-    token = os.environ.get("GEWECHAT_TOKE", "xxx")
+    token = os.environ.get("GEWECHAT_TOKEN", "xxx")
     app_id = os.environ.get("APP_ID", "xxx")
-    send_msg_nickname = "张伟" # 要发送消息的好友昵称
-
+    
     # 创建 GewechatClient 实例
     client = GewechatClient(base_url, token)
 
     # 登录, 自动创建二维码，扫码后自动登录
     app_id, error_msg = client.login(app_id=app_id)
     if error_msg:
-        print("登录失败")
-        return
-    try:
+        logger.error("微信登录失败")
+        return None, None
+    
+    logger.info("微信登录成功")
+    return client, app_id
 
+@app.route('/getWechatCallBack', methods=['POST'])
+def wechat_callback():
+    try:
+        data = request.get_json()
+        # 打印完整的回调消息
+        logger.debug("收到回调消息:")
+        logger.debug(json.dumps(data, ensure_ascii=False, indent=2))
+        
+        # 获取消息类型
+        msg_type = data.get('TypeName')
+        logger.debug(f"消息类型: {msg_type}")
+        
+        return {'ret': 200, 'msg': 'success'}
+    except Exception as e:
+        logger.error(f"处理回调消息异常: {str(e)}")
+        return {'ret': 500, 'msg': str(e)}
+
+def run_flask():
+    app.run(host='0.0.0.0', port=3000)
+
+def demo_send_message(client, app_id):
+    """演示发送消息功能"""
+    send_msg_nickname = "张伟"  # 要发送消息的好友昵称
+    try:
         # 获取好友列表
         fetch_contacts_list_result = client.fetch_contacts_list(app_id)
         if fetch_contacts_list_result.get('ret') != 200 or not fetch_contacts_list_result.get('data'):
-            print("获取通讯录列表失败:", fetch_contacts_list_result)
+            logger.error("获取通讯录列表失败:", fetch_contacts_list_result)
             return
-        # {'ret': 200, 'msg': '操作成功', 'data': {'friends': ['weixin', 'fmessage', 'medianote', 'floatbottle', 'wxid_abcxx'], 'chatrooms': ['1234xx@chatroom'], 'ghs': ['gh_xx']}}
         friends = fetch_contacts_list_result['data'].get('friends', [])
         if not friends:
-            print("获取到的好友列表为空")
+            logger.error("获取到的好友列表为空")
             return
-        print("获取到的好友列表:", friends)
+        logger.info("获取到的好友列表: %s", friends)
 
         # 获取好友的简要信息
         friends_info = client.get_brief_info(app_id, friends)
         if friends_info.get('ret') != 200 or not friends_info.get('data'):
-            print("获取好友简要信息失败:", friends_info)
+            logger.error("获取好友简要信息失败: %s", friends_info)
             return
         # {
         #     "ret": 200,
@@ -67,27 +102,49 @@ def main():
         # 找对目标好友的wxid
         friends_info_list = friends_info['data']
         if not friends_info_list:
-            print("获取到的好友简要信息列表为空")
+            logger.error("获取到的好友简要信息列表为空")
             return
         wxid = None
         for friend_info in friends_info_list:
             if friend_info.get('nickName') == send_msg_nickname:
-                print("找到好友:", friend_info)
+                logger.info("找到好友: %s", friend_info)
                 wxid = friend_info.get('userName')
                 break
         if not wxid:
-            print(f"没有找到好友: {send_msg_nickname} 的wxid")
+            logger.error(f"没有找到好友: {send_msg_nickname} 的wxid")
             return
-        print("找到好友:", wxid)
+        logger.info("找到好友: %s", wxid)
 
         # 发送消息
         send_msg_result = client.post_text(app_id, wxid, "你好啊")
         if send_msg_result.get('ret') != 200:
-            print("发送消息失败:", send_msg_result)
+            logger.error("发送消息失败: %s", send_msg_result)
             return
-        print("发送消息成功:", send_msg_result)
+        logger.info("发送消息成功: %s", send_msg_result)
     except Exception as e:
-        print("Failed to fetch contacts list:", str(e))
+        logger.error("执行消息发送示例失败: %s", str(e))
+
+def main():
+    # 启动Flask服务
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # 初始化微信客户端
+    client, app_id = init_wechat()
+    if not client:
+        return
+        
+    logger.info("系统启动完成,等待接收消息...")
+    
+    # 执行消息发送示例
+    demo_send_message(client, app_id)
+    
+    # 保持主线程运行
+    try:
+        flask_thread.join()
+    except KeyboardInterrupt:
+        logger.info("程序退出...")
 
 if __name__ == "__main__":
     main()
