@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from gewechat_client.handlers.message_handler import MessageHandler
 from database import create_connection, create_tables, save_contacts_to_db, get_friends, get_chatrooms, search_contacts, save_chatroom_members, get_chatroom_members_from_db, find_chatroom_by_name
 from config_manager import config_manager
+from ticket_manager import ticket_manager
 
 # 加载环境变量
 load_dotenv()
@@ -109,6 +110,12 @@ def wechat_callback():
             from_user = message.from_user
             is_chatroom = '@chatroom' in from_user
             
+            # 处理工单消息收集
+            try:
+                ticket_manager.handle_message(message, client, app_id)
+            except Exception as e:
+                logger.error(f"处理工单消息异常: {str(e)}", exc_info=True)
+            
             # 检查白名单
             if is_chatroom:
                 # 群聊消息
@@ -174,8 +181,20 @@ def wechat_callback():
 2. /更新群成员 群名称 - 更新指定群的成员列表
    例如：/更新群成员 技术交流群
 3. /帮助 - 显示此帮助信息
+4. /启用白名单 - 启用白名单功能
+5. /禁用白名单 - 禁用白名单功能
+6. /启用工单 - 启用工单功能
+7. /禁用工单 - 禁用工单功能
+8. /设置工单超时 秒数 - 设置工单消息收集超时时间
+   例如：/设置工单超时 120
+9. /添加工单群 群名称 - 添加工单群聊
+   例如：/添加工单群 技术交流群
+10. /删除工单群 群名称 - 删除工单群聊
+    例如：/删除工单群 技术交流群
+11. /查看工单配置 - 查看当前工单配置
 
-注意：只有在白名单中的用户或群聊才能使用以上命令。"""
+注意：只有在白名单中的用户或群聊才能使用以上命令。
+白名单配置支持热更新，修改 chat.json 后自动生效。"""
                 client.post_text(app_id, message.from_user, help_text)
             
             # 处理白名单配置命令
@@ -209,6 +228,135 @@ def wechat_callback():
                     client.post_text(app_id, message.from_user, f"白名单{status}")
                 else:
                     client.post_text(app_id, message.from_user, "更新白名单配置失败")
+
+            # 启用或禁用工单功能
+            elif message.content in ['/启用工单', '/禁用工单']:
+                enable = message.content == '/启用工单'
+                
+                # 获取当前配置
+                current_config = config_manager.get_config()
+                if 'ticket_config' not in current_config:
+                    current_config['ticket_config'] = {}
+                
+                current_config['ticket_config']['enable_ticket'] = enable
+                
+                # 添加更新时间
+                import datetime
+                current_config['last_updated'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 保存配置
+                if config_manager.update_config(current_config):
+                    status = "已启用" if enable else "已禁用"
+                    client.post_text(app_id, message.from_user, f"工单功能{status}")
+                else:
+                    client.post_text(app_id, message.from_user, "更新工单配置失败")
+            
+            # 设置工单超时时间
+            elif message.content.startswith('/设置工单超时 '):
+                try:
+                    # 提取超时时间
+                    timeout = int(message.content[9:].strip())
+                    if timeout <= 0:
+                        client.post_text(app_id, message.from_user, "超时时间必须大于0秒")
+                        return {'ret': 200, 'msg': 'success'}
+                    
+                    # 获取当前配置
+                    current_config = config_manager.get_config()
+                    if 'ticket_config' not in current_config:
+                        current_config['ticket_config'] = {}
+                    
+                    current_config['ticket_config']['message_collection_timeout'] = timeout
+                    
+                    # 添加更新时间
+                    import datetime
+                    current_config['last_updated'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    # 保存配置
+                    if config_manager.update_config(current_config):
+                        client.post_text(app_id, message.from_user, f"工单消息收集超时时间已设置为{timeout}秒")
+                    else:
+                        client.post_text(app_id, message.from_user, "更新工单配置失败")
+                except ValueError:
+                    client.post_text(app_id, message.from_user, "超时时间格式错误，请输入整数")
+            
+            # 查看工单配置
+            elif message.content == '/查看工单配置':
+                config = config_manager.get_config()
+                ticket_config = config.get('ticket_config', {})
+                
+                ticket_text = f"""当前工单配置：
+启用状态: {'已启用' if ticket_config.get('enable_ticket', False) else '未启用'}
+消息收集超时时间: {ticket_config.get('message_collection_timeout', 60)}秒
+
+工单群聊列表:
+{', '.join(ticket_config.get('ticket_chatrooms', []) or ['无'])}"""
+                client.post_text(app_id, message.from_user, ticket_text)
+
+            # 添加工单群聊
+            elif message.content.startswith('/添加工单群 '):
+                # 提取群名称
+                chatroom_name = message.content[8:].strip()
+                if not chatroom_name:
+                    client.post_text(app_id, message.from_user, "群名称不能为空")
+                    return {'ret': 200, 'msg': 'success'}
+                
+                # 获取当前配置
+                current_config = config_manager.get_config()
+                if 'ticket_config' not in current_config:
+                    current_config['ticket_config'] = {}
+                
+                if 'ticket_chatrooms' not in current_config['ticket_config']:
+                    current_config['ticket_config']['ticket_chatrooms'] = []
+                
+                # 检查是否已存在
+                if chatroom_name in current_config['ticket_config']['ticket_chatrooms']:
+                    client.post_text(app_id, message.from_user, f"群聊 {chatroom_name} 已在工单群列表中")
+                    return {'ret': 200, 'msg': 'success'}
+                
+                # 添加到列表
+                current_config['ticket_config']['ticket_chatrooms'].append(chatroom_name)
+                
+                # 添加更新时间
+                import datetime
+                current_config['last_updated'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 保存配置
+                if config_manager.update_config(current_config):
+                    client.post_text(app_id, message.from_user, f"已将群聊 {chatroom_name} 添加到工单群列表")
+                else:
+                    client.post_text(app_id, message.from_user, "更新工单配置失败")
+            
+            # 删除工单群聊
+            elif message.content.startswith('/删除工单群 '):
+                # 提取群名称
+                chatroom_name = message.content[8:].strip()
+                if not chatroom_name:
+                    client.post_text(app_id, message.from_user, "群名称不能为空")
+                    return {'ret': 200, 'msg': 'success'}
+                
+                # 获取当前配置
+                current_config = config_manager.get_config()
+                if 'ticket_config' not in current_config or 'ticket_chatrooms' not in current_config['ticket_config']:
+                    client.post_text(app_id, message.from_user, f"群聊 {chatroom_name} 不在工单群列表中")
+                    return {'ret': 200, 'msg': 'success'}
+                
+                # 检查是否存在
+                if chatroom_name not in current_config['ticket_config']['ticket_chatrooms']:
+                    client.post_text(app_id, message.from_user, f"群聊 {chatroom_name} 不在工单群列表中")
+                    return {'ret': 200, 'msg': 'success'}
+                
+                # 从列表中删除
+                current_config['ticket_config']['ticket_chatrooms'].remove(chatroom_name)
+                
+                # 添加更新时间
+                import datetime
+                current_config['last_updated'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 保存配置
+                if config_manager.update_config(current_config):
+                    client.post_text(app_id, message.from_user, f"已将群聊 {chatroom_name} 从工单群列表中删除")
+                else:
+                    client.post_text(app_id, message.from_user, "更新工单配置失败")
 
             # 这里可以添加自己的消息处理逻辑
             # handle_custom_message(message)
@@ -525,6 +673,95 @@ def get_chatroom_members(chatroom_id):
         if connection:
             connection.close()
 
+@app.route('/chatroom_member/oa_loginid', methods=['POST'])
+def update_member_oa_loginid():
+    """更新群成员的OA登录ID
+    
+    请求体格式:
+    {
+        "chatroom_id": "xxxxxxx@chatroom",
+        "wxid": "wxid_xxxxxx",
+        "oa_loginid": "user123"
+    }
+    
+    Returns:
+        更新结果
+    """
+    try:
+        data = request.get_json()
+        
+        # 验证请求参数
+        if not data or not isinstance(data, dict):
+            return jsonify({"ret": 400, "msg": "无效的请求格式"})
+        
+        chatroom_id = data.get('chatroom_id')
+        wxid = data.get('wxid')
+        oa_loginid = data.get('oa_loginid')
+        
+        if not chatroom_id or not wxid:
+            return jsonify({"ret": 400, "msg": "缺少必要参数: chatroom_id 或 wxid"})
+        
+        # 验证群聊ID格式
+        if not chatroom_id.endswith('chatroom'):
+            return jsonify({"ret": 400, "msg": "无效的群聊ID格式"})
+        
+        # 创建数据库连接
+        connection = create_connection()
+        if not connection:
+            return jsonify({"ret": 500, "msg": "数据库连接失败"})
+        
+        try:
+            cursor = connection.cursor()
+            
+            # 检查群成员是否存在
+            cursor.execute(
+                "SELECT id FROM chatroom_members WHERE chatroom_id = %s AND wxid = %s", 
+                (chatroom_id, wxid)
+            )
+            result = cursor.fetchone()
+            
+            if not result:
+                return jsonify({"ret": 404, "msg": f"未找到群成员: {wxid}"})
+            
+            # 更新OA登录ID
+            cursor.execute(
+                "UPDATE chatroom_members SET oa_loginid = %s WHERE chatroom_id = %s AND wxid = %s",
+                (oa_loginid, chatroom_id, wxid)
+            )
+            
+            connection.commit()
+            
+            # 获取群聊和用户名称，用于日志
+            cursor.execute("SELECT nick_name FROM chatrooms WHERE chatroom_id = %s", (chatroom_id,))
+            chatroom_result = cursor.fetchone()
+            chatroom_name = chatroom_result[0] if chatroom_result else chatroom_id
+            
+            cursor.execute("SELECT nick_name FROM chatroom_members WHERE chatroom_id = %s AND wxid = %s", (chatroom_id, wxid))
+            member_result = cursor.fetchone()
+            member_name = member_result[0] if member_result else wxid
+            
+            logger.info(f"已更新群成员OA登录ID: 群聊={chatroom_name}, 成员={member_name}, OA登录ID={oa_loginid}")
+            
+            return jsonify({
+                "ret": 200, 
+                "msg": "更新OA登录ID成功",
+                "data": {
+                    "chatroom_id": chatroom_id,
+                    "wxid": wxid,
+                    "oa_loginid": oa_loginid
+                }
+            })
+        except Exception as e:
+            connection.rollback()
+            logger.error(f"更新OA登录ID异常: {str(e)}")
+            return jsonify({"ret": 500, "msg": f"更新OA登录ID异常: {str(e)}"})
+        finally:
+            if connection:
+                connection.close()
+    except Exception as e:
+        logger.error(f"处理请求异常: {str(e)}")
+        return jsonify({"ret": 500, "msg": f"处理请求异常: {str(e)}"})
+
 @app.route('/whitelist', methods=['GET', 'POST'])
 def manage_whitelist():
     """管理白名单配置"""
@@ -599,6 +836,15 @@ def main():
     logger.info(f"群聊白名单: {', '.join(config.get('chatroom_whitelist', []) or ['无'])}")
     logger.info(f"配置文件支持热更新，修改 chat.json 后自动生效")
 
+    # 输出工单配置信息
+    config = config_manager.get_config()
+    ticket_config = config.get('ticket_config', {})
+    ticket_status = "已启用" if ticket_config.get('enable_ticket', False) else "未启用"
+    logger.info(f"工单功能状态: {ticket_status}")
+    if ticket_status == "已启用":
+        logger.info(f"工单消息收集超时时间: {ticket_config.get('message_collection_timeout', 60)}秒")
+        logger.info(f"工单群聊列表: {', '.join(ticket_config.get('ticket_chatrooms', []) or ['无'])}")
+    
     # 启动时获取通讯录
     fetch_contacts()  # 在启动时获取通讯录
     

@@ -29,12 +29,12 @@ def create_connection():
             user=db_config['user'],
             password=db_config['password']
         )
-        logger.info("成功连接到数据库服务器")
+        logger.debug("成功连接到数据库服务器")
 
         # 检查数据库是否存在
         cursor = connection.cursor()
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_config['database']}")
-        logger.info(f"数据库 {db_config['database']} 已创建或已存在")
+        logger.debug(f"数据库 {db_config['database']} 已创建或已存在")
         
         # 连接到指定数据库
         connection.database = db_config['database']
@@ -87,6 +87,7 @@ def create_tables(connection):
         head_img_url TEXT,
         is_owner BOOLEAN DEFAULT FALSE,
         is_admin BOOLEAN DEFAULT FALSE,
+        oa_loginid VARCHAR(255),
         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY unique_member (chatroom_id, wxid)
     )
@@ -315,8 +316,12 @@ def save_chatroom_members(connection, chatroom_id, member_list, owner=None, admi
     
     try:
         # 获取当前数据库中的群成员记录
-        cursor.execute("SELECT wxid FROM chatroom_members WHERE chatroom_id = %s", (chatroom_id,))
-        existing_members = {row[0] for row in cursor.fetchall()}
+        cursor.execute("SELECT wxid, oa_loginid FROM chatroom_members WHERE chatroom_id = %s", (chatroom_id,))
+        existing_members_data = cursor.fetchall()
+        existing_members = {row[0] for row in existing_members_data}
+        
+        # 保存现有的oa_loginid映射，避免更新时覆盖
+        oa_loginid_map = {row[0]: row[1] for row in existing_members_data if row[1] is not None}
         
         # 当前API返回的群成员
         current_members = set()
@@ -335,6 +340,9 @@ def save_chatroom_members(connection, chatroom_id, member_list, owner=None, admi
             # 判断是否为群主或管理员
             is_owner = owner and wxid == owner
             is_admin = admins and wxid in admins
+            
+            # 保留现有的oa_loginid
+            oa_loginid = oa_loginid_map.get(wxid)
             
             if wxid in existing_members:
                 # 更新现有成员信息
@@ -369,8 +377,8 @@ def save_chatroom_members(connection, chatroom_id, member_list, owner=None, admi
                 INSERT INTO chatroom_members (
                     chatroom_id, wxid, nick_name, display_name, 
                     inviter_user_name, member_flag, head_img_url, 
-                    is_owner, is_admin
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    is_owner, is_admin, oa_loginid
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 data = (
                     chatroom_id,
@@ -381,7 +389,8 @@ def save_chatroom_members(connection, chatroom_id, member_list, owner=None, admi
                     member.get('memberFlag'),
                     member.get('smallHeadImgUrl'),
                     is_owner,
-                    is_admin
+                    is_admin,
+                    None  # 新成员的oa_loginid初始为NULL
                 )
                 cursor.execute(query, data)
                 new_members += 1
@@ -417,7 +426,10 @@ def get_chatroom_members_from_db(connection, chatroom_id, limit=1000, offset=0):
     """
     cursor = connection.cursor(dictionary=True)
     query = """
-    SELECT * FROM chatroom_members
+    SELECT id, chatroom_id, wxid, nick_name, display_name, 
+           inviter_user_name, member_flag, head_img_url, 
+           is_owner, is_admin, oa_loginid, last_updated
+    FROM chatroom_members
     WHERE chatroom_id = %s
     ORDER BY is_owner DESC, is_admin DESC, nick_name
     LIMIT %s OFFSET %s
@@ -425,7 +437,7 @@ def get_chatroom_members_from_db(connection, chatroom_id, limit=1000, offset=0):
     cursor.execute(query, (chatroom_id, limit, offset))
     results = cursor.fetchall()
     cursor.close()
-    return results 
+    return results
 
 def find_chatroom_by_name(connection, chatroom_name):
     """根据群名称查找群ID
