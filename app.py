@@ -1,12 +1,12 @@
 from gewechat_client import GewechatClient
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import os
 import threading
 import json
 import logging
 from dotenv import load_dotenv
 from gewechat_client.handlers.message_handler import MessageHandler
-from database import create_connection, create_tables, save_contacts_to_db
+from database import create_connection, create_tables, save_contacts_to_db, get_friends, get_chatrooms, search_contacts
 
 # 加载环境变量
 load_dotenv()
@@ -121,6 +121,65 @@ def fetch_contacts():
             "data": contacts
         }
     return {"ret": 500, "msg": "数据库连接失败"}
+
+@app.route('/friends', methods=['GET'])
+def list_friends():
+    """获取好友列表"""
+    connection = create_connection()
+    if connection:
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        
+        results = get_friends(connection, limit, offset)
+        
+        return jsonify({
+            "ret": 200,
+            "msg": "获取好友列表成功",
+            "data": results,
+            "total": len(results)
+        })
+    return jsonify({"ret": 500, "msg": "数据库连接失败"})
+
+@app.route('/chatrooms', methods=['GET'])
+def list_chatrooms():
+    """获取群聊列表"""
+    connection = create_connection()
+    if connection:
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        
+        results = get_chatrooms(connection, limit, offset)
+        
+        return jsonify({
+            "ret": 200,
+            "msg": "获取群聊列表成功",
+            "data": results,
+            "total": len(results)
+        })
+    return jsonify({"ret": 500, "msg": "数据库连接失败"})
+
+@app.route('/search', methods=['GET'])
+def search():
+    """搜索联系人"""
+    connection = create_connection()
+    if connection:
+        keyword = request.args.get('keyword', '')
+        contact_type = request.args.get('type')  # 'friend' 或 'chatroom'
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        
+        if not keyword:
+            return jsonify({"ret": 400, "msg": "搜索关键词不能为空"})
+        
+        results = search_contacts(connection, keyword, contact_type, limit, offset)
+        
+        return jsonify({
+            "ret": 200,
+            "msg": "搜索联系人成功",
+            "data": results,
+            "total": len(results)
+        })
+    return jsonify({"ret": 500, "msg": "数据库连接失败"})
 
 def run_flask():
     """运行Flask服务"""

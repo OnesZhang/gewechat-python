@@ -2,6 +2,7 @@ import mysql.connector
 from mysql.connector import Error
 import os
 import logging
+import json
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -47,13 +48,23 @@ def create_tables(connection):
     create_friends_table = """
     CREATE TABLE IF NOT EXISTS friends (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        wxid VARCHAR(255) NOT NULL UNIQUE
+        wxid VARCHAR(255) NOT NULL UNIQUE,
+        nick_name VARCHAR(255),
+        sex INT,
+        country VARCHAR(50),
+        province VARCHAR(100),
+        city VARCHAR(100),
+        head_img_url TEXT,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
     """
     create_chatrooms_table = """
     CREATE TABLE IF NOT EXISTS chatrooms (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        chatroom_id VARCHAR(255) NOT NULL UNIQUE
+        chatroom_id VARCHAR(255) NOT NULL UNIQUE,
+        nick_name VARCHAR(255),
+        head_img_url TEXT,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
     """
     create_ghs_table = """
@@ -69,7 +80,7 @@ def create_tables(connection):
     connection.commit()
     cursor.close()
 
-def save_contacts_to_db(connection, contacts):
+def save_contacts_to_db(connection, contacts, brief_info=None):
     """将通讯录保存到数据库"""
     cursor = connection.cursor()
     
@@ -110,5 +121,126 @@ def save_contacts_to_db(connection, contacts):
         if gh_id not in contacts['ghs']:
             cursor.execute("DELETE FROM ghs WHERE gh_id = %s", (gh_id,))
     
+    # 保存联系人简要信息
+    if brief_info:
+        for info in brief_info:
+            user_name = info.get('userName')
+            
+            # 处理好友信息
+            if user_name in contacts['friends']:
+                query = """
+                UPDATE friends SET 
+                    nick_name = %s,
+                    sex = %s,
+                    country = %s,
+                    province = %s,
+                    city = %s,
+                    head_img_url = %s
+                WHERE wxid = %s
+                """
+                data = (
+                    info.get('nickName'),
+                    info.get('sex'),
+                    info.get('country'),
+                    info.get('province'),
+                    info.get('city'),
+                    info.get('smallHeadImgUrl'),
+                    user_name
+                )
+                cursor.execute(query, data)
+            
+            # 处理群聊信息
+            elif user_name in contacts['chatrooms']:
+                query = """
+                UPDATE chatrooms SET 
+                    nick_name = %s,
+                    head_img_url = %s
+                WHERE chatroom_id = %s
+                """
+                data = (
+                    info.get('nickName'),
+                    info.get('smallHeadImgUrl'),
+                    user_name
+                )
+                cursor.execute(query, data)
+    
     connection.commit()
-    cursor.close() 
+    cursor.close()
+
+def get_friends(connection, limit=100, offset=0):
+    """获取好友列表"""
+    cursor = connection.cursor(dictionary=True)
+    query = """
+    SELECT * FROM friends
+    ORDER BY nick_name
+    LIMIT %s OFFSET %s
+    """
+    cursor.execute(query, (limit, offset))
+    results = cursor.fetchall()
+    cursor.close()
+    return results
+
+def get_chatrooms(connection, limit=100, offset=0):
+    """获取群聊列表"""
+    cursor = connection.cursor(dictionary=True)
+    query = """
+    SELECT * FROM chatrooms
+    ORDER BY nick_name
+    LIMIT %s OFFSET %s
+    """
+    cursor.execute(query, (limit, offset))
+    results = cursor.fetchall()
+    cursor.close()
+    return results
+
+def search_contacts(connection, keyword, contact_type=None, limit=100, offset=0):
+    """
+    搜索联系人
+    
+    参数:
+        connection: 数据库连接
+        keyword: 搜索关键词
+        contact_type: 联系人类型，可选 ('friend', 'chatroom')
+        limit: 返回结果数量限制，默认100
+        offset: 分页偏移量，默认0
+        
+    返回:
+        匹配的联系人列表
+    """
+    cursor = connection.cursor(dictionary=True)
+    
+    if contact_type == 'friend':
+        query = """
+        SELECT * FROM friends
+        WHERE nick_name LIKE %s OR wxid LIKE %s
+        ORDER BY nick_name
+        LIMIT %s OFFSET %s
+        """
+        search_param = f"%{keyword}%"
+        cursor.execute(query, (search_param, search_param, limit, offset))
+    elif contact_type == 'chatroom':
+        query = """
+        SELECT * FROM chatrooms
+        WHERE nick_name LIKE %s OR chatroom_id LIKE %s
+        ORDER BY nick_name
+        LIMIT %s OFFSET %s
+        """
+        search_param = f"%{keyword}%"
+        cursor.execute(query, (search_param, search_param, limit, offset))
+    else:
+        # 搜索所有类型
+        query = """
+        (SELECT 'friend' as type, id, wxid as contact_id, nick_name, head_img_url FROM friends
+         WHERE nick_name LIKE %s OR wxid LIKE %s)
+        UNION
+        (SELECT 'chatroom' as type, id, chatroom_id as contact_id, nick_name, head_img_url FROM chatrooms
+         WHERE nick_name LIKE %s OR chatroom_id LIKE %s)
+        ORDER BY nick_name
+        LIMIT %s OFFSET %s
+        """
+        search_param = f"%{keyword}%"
+        cursor.execute(query, (search_param, search_param, search_param, search_param, limit, offset))
+    
+    results = cursor.fetchall()
+    cursor.close()
+    return results 
