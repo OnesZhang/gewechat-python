@@ -3,7 +3,7 @@ from typing import Union
 import re
 from ..models.message import (
     BaseMessage, PrivateMessage, GroupMessage, 
-    MessageType, ImageInfo, VoiceInfo, VideoInfo, FileInfo
+    MessageType, ImageInfo, VoiceInfo, VideoInfo, FileInfo, ReferenceInfo
 )
 
 class MessageHandler:
@@ -24,6 +24,10 @@ class MessageHandler:
             "msg_seq": msg_data["MsgSeq"]
         }
         
+        # 添加push_content字段（如果存在）
+        if "PushContent" in msg_data:
+            base_data["push_content"] = msg_data["PushContent"]
+        
         # 解析群消息
         sender_pattern = r"^(.*?):"
         sender_match = re.match(sender_pattern, base_data["content"])
@@ -37,6 +41,7 @@ class MessageHandler:
         voice_info = None
         video_info = None
         file_info = None
+        reference_info = None
         
         if msg_data["MsgType"] == MessageType.IMAGE.value:
             try:
@@ -55,9 +60,25 @@ class MessageHandler:
                 logging.error(f"解析视频信息失败: {e}")
         elif msg_data["MsgType"] == MessageType.FILE.value:
             try:
-                file_info = FileInfo.from_xml(content)
-            except ValueError as e:
-                logging.error(f"解析文件信息失败: {e}")
+                # 尝试解析文件信息
+                try:
+                    file_info = FileInfo.from_xml(content)
+                except ValueError as e:
+                    # 检查是否是因为消息是引用类型而失败
+                    if "reference message" in str(e).lower():
+                        # 是引用消息，解析引用信息
+                        try:
+                            reference_info = ReferenceInfo.from_xml(content)
+                            logging.debug(f"成功解析引用消息: {reference_info.title}")
+                            # 将消息类型直接修改为REFERENCE，确保后续处理正确识别
+                            base_data["msg_type"] = MessageType.REFERENCE.value
+                        except ValueError as ref_e:
+                            logging.error(f"解析引用消息信息失败: {ref_e}")
+                    else:
+                        # 其他文件解析错误
+                        logging.error(f"解析文件信息失败: {e}")
+            except Exception as e:
+                logging.error(f"处理消息内容时出错: {e}")
         
         # 解析群成员数
         member_count_pattern = r"<membercount>(\d+)</membercount>"
@@ -74,7 +95,8 @@ class MessageHandler:
                 image_info=image_info,
                 voice_info=voice_info,
                 video_info=video_info,
-                file_info=file_info
+                file_info=file_info,
+                reference_info=reference_info
             )
         else:
             # 私聊消息
@@ -83,7 +105,8 @@ class MessageHandler:
                 image_info=image_info, 
                 voice_info=voice_info,
                 video_info=video_info,
-                file_info=file_info
+                file_info=file_info,
+                reference_info=reference_info
             )
 
     @staticmethod
@@ -126,6 +149,13 @@ class MessageHandler:
                     f"大小: {message.file_info.size_in_kb:.1f}KB "
                     f"时间: {message.create_datetime}"
                 )
+            elif message.message_type == MessageType.REFERENCE:
+                logger.debug(
+                    f"收到群引用消息 - 群ID: {message.group_id} "
+                    f"发送者: {message.sender_id} "
+                    f"引用内容: {message.reference_info.title if message.reference_info else 'Unknown'} "
+                    f"时间: {message.create_datetime}"
+                )
             else:
                 logger.debug(
                     f"收到群消息 - 群ID: {message.group_id} "
@@ -162,6 +192,12 @@ class MessageHandler:
                     f"文件名: {message.file_info.title} "
                     f"类型: {message.file_info.file_ext} "
                     f"大小: {message.file_info.size_in_kb:.1f}KB "
+                    f"时间: {message.create_datetime}"
+                )
+            elif message.message_type == MessageType.REFERENCE:
+                logger.debug(
+                    f"收到私聊引用消息 - 发送者: {message.from_user} "
+                    f"引用内容: {message.reference_info.title if message.reference_info else 'Unknown'} "
                     f"时间: {message.create_datetime}"
                 )
             else:

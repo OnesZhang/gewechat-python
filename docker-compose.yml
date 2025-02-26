@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  app:
+    image: crpi-xcrdbvalz21m1xhf.cn-beijing.personal.cr.aliyuncs.com/oneszhang/gewechaty:v2.0.1
+    container_name: gewechat-python
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./chat.json:/app/chat.json
+    env_file:
+      - .env
+    depends_on:
+      - db
+    networks:
+      - gewechat-network
+
+  db:
+    image: mysql:8.0
+    container_name: gewechat-mysql
+    restart: always
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - MYSQL_ROOT_PASSWORD=wanzi12345
+      - MYSQL_DATABASE=wechat_contacts
+      - MYSQL_USER=gewechat
+      - MYSQL_PASSWORD=gewechat_password
+      - TZ=Asia/Shanghai
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - gewechat-network
+
+networks:
+  gewechat-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
+    driver: local 

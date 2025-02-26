@@ -11,6 +11,7 @@ class MessageType(Enum):
     VOICE = 34
     VIDEO = 43
     FILE = 49  # 文件消息,之前用APP不够明确
+    REFERENCE = 57  # 引用消息，内部type值为57
     # 可继续添加其他类型...
 
 class FileStatus(Enum):
@@ -150,8 +151,15 @@ class FileInfo:
         try:
             root = ET.fromstring(xml_str)
             appmsg = root.find('appmsg')
-            if appmsg is not None:
+            if appmsg is not None and appmsg.find('type') is not None:
+                # 检查appmsg.type，判断消息类型
                 msg_type = int(appmsg.find('type').text)
+                
+                # 如果是引用消息类型(57)，抛出特殊的引用消息异常，方便后续处理程序识别
+                if msg_type == MessageType.REFERENCE.value:  # 57
+                    raise ValueError("This is a reference message (type 57), not a file message")
+                
+                # 文件消息的处理 (msg_type 为 6 或 74)
                 appattach = appmsg.find('appattach')
                 
                 # 基础信息
@@ -176,6 +184,9 @@ class FileInfo:
         except ET.ParseError as e:
             raise ValueError(f"Invalid XML format: {e}")
         except (AttributeError, ValueError) as e:
+            # 如果错误信息中包含特定文本，保留原始错误信息，确保引用消息标记
+            if isinstance(e, ValueError) and "reference message" in str(e).lower():
+                raise
             raise ValueError(f"Invalid file info: {e}")
 
     @property
@@ -189,6 +200,45 @@ class FileInfo:
         return self.type == FileStatus.COMPLETED
 
 @dataclass
+class ReferenceInfo:
+    """引用消息信息"""
+    title: str  # 引用消息的描述文字
+    refer_type: int  # 被引用消息的类型
+    refer_content: str  # 被引用消息的内容
+    refer_svrid: str  # 被引用消息的服务器ID
+    refer_from_user: str  # 被引用消息的发送者
+    refer_chat_user: str  # 被引用消息的聊天用户
+    refer_display_name: str  # 被引用消息发送者的显示名称
+    refer_msg_source: Optional[str] = None  # 被引用消息的来源信息
+    
+    @classmethod
+    def from_xml(cls, xml_str: str) -> 'ReferenceInfo':
+        """从XML字符串解析引用消息信息"""
+        try:
+            root = ET.fromstring(xml_str)
+            appmsg = root.find('appmsg')
+            if appmsg is not None and appmsg.find('type') is not None and int(appmsg.find('type').text) == 57:
+                title = appmsg.find('title').text if appmsg.find('title') is not None else ""
+                refermsg = appmsg.find('refermsg')
+                
+                if refermsg is not None:
+                    return cls(
+                        title=title,
+                        refer_type=int(refermsg.find('type').text) if refermsg.find('type') is not None else 0,
+                        refer_content=refermsg.find('content').text if refermsg.find('content') is not None else "",
+                        refer_svrid=refermsg.find('svrid').text if refermsg.find('svrid') is not None else "",
+                        refer_from_user=refermsg.find('fromusr').text if refermsg.find('fromusr') is not None else "",
+                        refer_chat_user=refermsg.find('chatusr').text if refermsg.find('chatusr') is not None else "",
+                        refer_display_name=refermsg.find('displayname').text if refermsg.find('displayname') is not None else "",
+                        refer_msg_source=refermsg.find('msgsource').text if refermsg.find('msgsource') is not None else None
+                    )
+            raise ValueError("Invalid reference XML: appmsg tag not found or type is not 57")
+        except ET.ParseError as e:
+            raise ValueError(f"Invalid XML format: {e}")
+        except (AttributeError, ValueError) as e:
+            raise ValueError(f"Invalid reference info: {e}")
+
+@dataclass
 class BaseMessage:
     """基础消息模型"""
     msg_id: int  
@@ -200,6 +250,7 @@ class BaseMessage:
     msg_type: int
     msg_source: str
     msg_seq: int
+    push_content: Optional[str] = None  # 添加push_content字段，用于存储通知内容
     
     @property
     def create_datetime(self) -> datetime:
@@ -209,6 +260,23 @@ class BaseMessage:
     @property
     def message_type(self) -> MessageType:
         """获取消息类型枚举值"""
+        # 特殊处理引用消息：当MsgType=49(文件消息)，且XML中appmsg.type=57时，识别为引用消息
+        if self.msg_type == MessageType.FILE.value:  # MsgType=49
+            try:
+                # 解析XML内容
+                root = ET.fromstring(self.content)
+                appmsg = root.find('appmsg')
+                if appmsg is not None and appmsg.find('type') is not None:
+                    inner_type = int(appmsg.find('type').text)
+                    # 判断是否为引用消息类型(57)
+                    if inner_type == MessageType.REFERENCE.value:  # appmsg.type=57
+                        return MessageType.REFERENCE
+            except (ET.ParseError, AttributeError, ValueError) as e:
+                # 解析失败时的错误处理
+                # 不影响正常消息类型返回，但可以考虑添加调试日志
+                pass
+        
+        # 非引用消息或判断引用消息失败，返回原始消息类型
         return MessageType(self.msg_type)
 
 @dataclass 
@@ -218,14 +286,16 @@ class PrivateMessage(BaseMessage):
     voice_info: Optional[VoiceInfo] = None
     video_info: Optional[VideoInfo] = None
     file_info: Optional[FileInfo] = None
+    reference_info: Optional[ReferenceInfo] = None
 
 @dataclass
 class GroupMessage(BaseMessage):
     """群聊消息模型"""
-    group_id: str
-    sender_id: str
+    group_id: str = ""  # 添加默认值
+    sender_id: str = ""  # 添加默认值
     member_count: Optional[int] = None
     image_info: Optional[ImageInfo] = None
     voice_info: Optional[VoiceInfo] = None
     video_info: Optional[VideoInfo] = None
-    file_info: Optional[FileInfo] = None 
+    file_info: Optional[FileInfo] = None
+    reference_info: Optional[ReferenceInfo] = None 

@@ -4,18 +4,21 @@
         "测试用户"
     ],
     "chatroom_whitelist": [
-        "技术交流群",
+        "aaa测试群",
         "bbb测试群"
     ],
     "enable_whitelist": true,
     "last_updated": "2025-02-26 10:00:00",
     "ticket_config": {
         "enable_ticket": true,
-        "message_collection_timeout": 10,
-        "ticket_chatrooms": ["aaa测试群"]
+        "message_collection_timeout": 20,
+        "ticket_chatrooms": [
+            "aaa测试群",
+            "deepseek"
+        ]
     },
     "ai_api": {
-        "api_key": "sk-proj-1234567890",
-        "api_url": "https://api.example.com/v1/chat/completions"
+        "api_key": "fastgpt-uqWYCzvU6iPnyr3hB9ScERBN22KuCPVJGQKeFFbtsU46kUk65uXfqDep0B1p6Ax",
+        "api_url": "https://fast.huahan.cc/api/v1/chat/completions"
     }
-} 
+}

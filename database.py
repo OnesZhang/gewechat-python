@@ -7,16 +7,34 @@ import json
 from dotenv import load_dotenv
 load_dotenv()
 
+# 加载环境变量
+load_dotenv()
+
 # 数据库配置
 db_config = {
     'host': os.getenv('DB_HOST', 'localhost'),
-    'port': os.getenv('DB_PORT', 3306),
-    'database': os.getenv('DB_NAME', 'wechat_contacts'),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD', 'password')
+    'port': int(os.getenv('DB_PORT', 3306)),
+    'user': os.getenv('DB_USER', 'gewechat'),
+    'password': os.getenv('DB_PASSWORD', 'gewechat_password'),
+    'database': os.getenv('DB_NAME', 'gewechat'),
 }
 
 logger = logging.getLogger(__name__)
+
+def get_db_connection():
+    """获取数据库连接"""
+    try:
+        connection = mysql.connector.connect(
+            host=db_config['host'],
+            port=db_config['port'],
+            user=db_config['user'],
+            password=db_config['password'],
+            database=db_config['database']
+        )
+        return connection
+    except Exception as e:
+        print(f"数据库连接失败: {str(e)}")
+        raise
 
 def create_connection():
     """创建数据库连接"""

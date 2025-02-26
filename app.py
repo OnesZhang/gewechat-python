@@ -124,7 +124,7 @@ def wechat_callback():
                 connection = create_connection()
                 if connection:
                     cursor = connection.cursor(dictionary=True)
-                    cursor.execute("SELECT nick_name FROM chatrooms WHERE chatroom_id = %s", (chatroom_id,))
+                    cursor.execute("SELECT nick_name FROM chatrooms WHERE chatroom_id = %s LIMIT 1", (chatroom_id,))
                     result = cursor.fetchone()
                     cursor.close()
                     connection.close()
@@ -142,7 +142,7 @@ def wechat_callback():
                 connection = create_connection()
                 if connection:
                     cursor = connection.cursor(dictionary=True)
-                    cursor.execute("SELECT nick_name FROM friends WHERE wxid = %s", (user_id,))
+                    cursor.execute("SELECT nick_name FROM friends WHERE wxid = %s LIMIT 1", (user_id,))
                     result = cursor.fetchone()
                     cursor.close()
                     connection.close()
@@ -715,7 +715,7 @@ def update_member_oa_loginid():
             
             # 检查群成员是否存在
             cursor.execute(
-                "SELECT id FROM chatroom_members WHERE chatroom_id = %s AND wxid = %s", 
+                "SELECT id FROM chatroom_members WHERE chatroom_id = %s AND wxid = %s LIMIT 1",
                 (chatroom_id, wxid)
             )
             result = cursor.fetchone()
@@ -732,11 +732,11 @@ def update_member_oa_loginid():
             connection.commit()
             
             # 获取群聊和用户名称，用于日志
-            cursor.execute("SELECT nick_name FROM chatrooms WHERE chatroom_id = %s", (chatroom_id,))
+            cursor.execute("SELECT nick_name FROM chatrooms WHERE chatroom_id = %s LIMIT 1", (chatroom_id,))
             chatroom_result = cursor.fetchone()
             chatroom_name = chatroom_result[0] if chatroom_result else chatroom_id
             
-            cursor.execute("SELECT nick_name FROM chatroom_members WHERE chatroom_id = %s AND wxid = %s", (chatroom_id, wxid))
+            cursor.execute("SELECT nick_name FROM chatroom_members WHERE chatroom_id = %s AND wxid = %s LIMIT 1", (chatroom_id, wxid))
             member_result = cursor.fetchone()
             member_name = member_result[0] if member_result else wxid
             
