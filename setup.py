@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -13,7 +13,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/hanfangyuan4396/gewechat-python",
     license='Apache-2.0',
-    packages=['gewechat_client', 'gewechat_client.api', 'gewechat_client.util'],
+    packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: Apache Software License",
@@ -21,6 +21,8 @@ setup(
     ],
     python_requires=">=3.6",
     install_requires=[
+        "Flask",
+        "Flask-SocketIO",
         "requests",
         "qrcode==7.4.2"
     ],

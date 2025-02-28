@@ -1,6 +1,26 @@
-# gewechat-python
+# Gewechat Client
 
-gewechat python client
+## 项目结构
+
+```
+gewechat_client/
+    ├── __init__.py
+    ├── api/
+    │   ├── __init__.py
+    │   └── message.py
+    ├── util/
+    │   ├── __init__.py
+    │   └── helpers.py
+    └── message_handler.py
+
+tests/
+    ├── __init__.py
+    └── test_message_handler.py
+
+setup.py
+README.md
+LICENSE
+```
 
 ## Usage
 
